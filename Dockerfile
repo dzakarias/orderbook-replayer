@@ -22,6 +22,9 @@ COPY ./pyproject.toml ./poetry.lock /app/
 # Install Python dependencies using Poetry
 RUN poetry install --no-root --no-interaction --no-ansi
 
+# Add the src directory to PYTHONPATH
+ENV PYTHONPATH="${PYTHONPATH}:/app/src"
+
 # Expose the port FastAPI will run on
 EXPOSE 8000
 
