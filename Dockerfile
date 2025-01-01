@@ -15,7 +15,8 @@ RUN curl -sSL https://install.python-poetry.org | python3 -
 ENV PATH="/root/.local/bin:${PATH}"
 
 # Copy the backend directory into the container
-COPY ./backend /app
+COPY ./src/backend /app
+COPY ./src/frontend /app
 
 # Install Python dependencies using Poetry
 RUN poetry install --no-root --no-interaction --no-ansi
