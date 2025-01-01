@@ -1,0 +1,7 @@
+.git
+.idea
+.aider*
+.env
+.coding-aider*
+.pytest_cache
+__pycache__
