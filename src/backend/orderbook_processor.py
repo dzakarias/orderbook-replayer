@@ -1,6 +1,8 @@
 import json
 from decimal import Decimal
 
+import argparse
+
 from halfbook import Halfbook
 
 from line_profiler import LineProfiler
@@ -152,7 +154,11 @@ def process_orderbook_file(input_file: str, max_levels: int = 20):
 
 
 if __name__ == '__main__':
-    input_file = '../data/market_maker/ob_history/2024-02-03_BNBUSDT_ob500.data'
-    process_orderbook_file(input_file, max_levels=20)
+    parser = argparse.ArgumentParser(description='Bybit orderbook history compressor')
+    parser.add_argument('-f', '--file', help='Path of the input file (as downloaded from Bybit)', required=True)
+    parser.add_argument('-d', '--depth', help='Maximum depth of output orderbook history, default: 20', type=int, default=20)
+    args = parser.parse_args()
+
+    process_orderbook_file(args.file, max_levels=args.depth)
     if ENABLE_PROFILING:
         lp.print_stats()
