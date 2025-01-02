@@ -1,7 +1,7 @@
 
 # Orderbook Replayer
 
-A small fullstack app: a Python FastAPI backend maintaining state of an archive closed limit order book (CLOB), and a Vue.js frontend visualizing said state, and providing controls for replay.
+A small fullstack app: a Python FastAPI backend maintaining state of an archive central limit order book (CLOB), and a Vue.js frontend visualizing said state, and providing controls for replay.
 
 
 
