@@ -8,7 +8,7 @@ A small fullstack app: a Python backend maintaining state of an archive closed l
 
 ## Screenshots
 
-![App Screenshot](https://via.placeholder.com/468x300?text=App+Screenshot+Here)
+![App Screenshot](./screenshot/screen1.png)
 
 
 ## Orderbooks
