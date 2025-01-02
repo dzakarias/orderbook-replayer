@@ -13,7 +13,7 @@ A small fullstack app: a Python backend maintaining state of an archive closed l
 
 ## Orderbooks
 
-The app works on historical orderbook data. Bybit (a major cryptocurrency exchange) provides 500-depth orderbook history for free download. The problem with this is size: a typical day of BTCUSDT trading is well over a gigabyte in the format they provide. So the backend includes a utility class (OrderBookProcessor) that takes such a Bybit history file as input, and outputs a new file with configurable depth. For an example, the repo includes a 20-depth book for February 3, 2024 for BNBUSDT. 20 levels are enough for most practical purposes and they require 3-10x less space.
+The app works on historical orderbook data. Bybit (a major cryptocurrency exchange) provides 500-depth orderbook history for free download. The problem with this is size: a typical day of BTCUSDT trading is well over a gigabyte in the format they provide. So the backend includes a utility class (OrderBookProcessor) that takes such a Bybit history file as input, and outputs a new file with configurable depth. For an example, the repo includes a 20-depth book for February 3, 2024 for BNBUSDT. 20 levels are enough for most practical purposes and they require 3-10x less space than a full, depth-500 one.
 
 ## More technical details on orderbooks
 
@@ -68,6 +68,11 @@ poetry run uvicorn src.backend.ob_replayer_backend:app --host 0.0.0.0 --port 800
 
 The project includes a Dockerfile you can use to deploy it in a containerized manner. Here's it deployed to Render: https://orderbook-replayer.onrender.com/
 It might take a minute to load as it's on a free account: so uses a Spot instance on AWS which take some time to fire up.
+
+## Usage
+
+When the app loads, select a date. A list of markets for which orderbook histories are available at the backend will be populated. Choose one to load the initial snapshot of that orderbook.
+The repo includes only one orderbook file, so you'll need to select 02-03-2024 as date, and the BNBUSDT book history will be loaded.
 
 
 ## License
