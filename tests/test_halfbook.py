@@ -2,7 +2,7 @@ from decimal import Decimal
 
 import pytest
 
-from halfbook import Halfbook
+from src.backend.halfbook import Halfbook
 
 
 def test_halfbook_bid():

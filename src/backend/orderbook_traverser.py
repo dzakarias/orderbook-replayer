@@ -6,13 +6,13 @@ import json
 from dataclasses import dataclass
 from sortedcontainers import SortedDict
 
-from .orderbook import OrderBook
+from src.backend.halfbook import Orderbook, Halfbook
 
 
 @dataclass
 class OrderbookState:
-    bids: list[list[str]]  # [[price, size], ...]
-    asks: list[list[str]]  # [[price, size], ...]
+    bids: Halfbook
+    asks: Halfbook
     timestamp: int
     sequence: int
 
@@ -33,22 +33,30 @@ class FPCache:
     def __init__(self):
         self.cache = SortedDict()
 
+    @property
+    def last_key(self) -> int | None:
+        if self.cache:
+            return self.cache.keys()[-1]
+        return None
+
     def add(self, key: int, value) -> None:
         """
         Adds a new key-value pair if key is not already present
         """
         if key in self.cache:
             return
-        self.cache[key] = value
+        self.cache[key] = deepcopy(value)
 
     def get(self, key: int):
         """
         Returns the value associated with the given key, if key is present.
-        Otherwise the value associated with the smallest key larger than input key, or None if we do not have any values.
-        If smallest_larger_mode is False, the largest key smaller than input will be returned
+        Otherwise the value associated with the largest key smaller than input key, or None if we do not have any values.
         """
+        if not self.cache:
+            return None
         idx = self.cache.bisect_left(key)
-        if idx < len(self.cache):
+
+        if idx < len(self.cache) and self.cache.peekitem(index=idx)[0] == key:
             return self.cache.peekitem(index=idx)[1]
         if len(self.cache):
             return self.cache.peekitem(index=idx - 1)[1]
@@ -73,6 +81,7 @@ class OrderbookTraverser:
         # Create cache and load initial snapshot
         self.obs_cache = FPCache()
         self._load_initial_snapshot()
+        self.initial_timestamp = self.current_timestamp
 
     def _load_initial_snapshot(self):
         """
@@ -82,7 +91,12 @@ class OrderbookTraverser:
             first_line = f.readline()
             data = json.loads(first_line)
 
-            self.current_state = OrderbookState(bids=data['b'], asks=data['a'], timestamp=data['t'], sequence=data['s'])
+            initial_bids = Halfbook(is_bid=True)
+            initial_bids.set(data['b'])
+            initial_asks = Halfbook(is_bid=False)
+            initial_asks.set(data['a'])
+
+            self.current_state = OrderbookState(bids=initial_bids, asks=initial_asks, timestamp=data['t'], sequence=data['s'])
             self.current_timestamp = self.current_state.timestamp
 
             self.current_position = f.tell()
@@ -94,36 +108,15 @@ class OrderbookTraverser:
         """
         # Update bids if present in delta
         if 'b' in data:
-            current_bids = {price: size for price, size in self.current_state.bids}
             for price, size in data['b']:
-                if Decimal(size) == 0:
-                    current_bids.pop(price, None)
-                else:
-                    current_bids[price] = size
-
-            # Sort descending
-            sorted_bids = sorted(((Decimal(price), price, size) for price, size in current_bids.items()), reverse=True)
-            new_bids = [[str(price), size] for _, price, size in sorted_bids]
-        else:
-            new_bids = self.current_state.bids
-
+                self.current_state.bids.update(price=price, qty=size)
         # Update asks if present in delta
         if 'a' in data:
-            current_asks = {price: size for price, size in self.current_state.asks}
             for price, size in data['a']:
-                if Decimal(size) == 0:
-                    current_asks.pop(price, None)
-                else:
-                    current_asks[price] = size
+                self.current_state.asks.update(price=price, qty=size)
 
-            # Sort ascending
-            sorted_asks = sorted(((Decimal(price), price, size) for price, size in current_asks.items()))
-            new_asks = [[str(price), size] for _, price, size in sorted_asks]
-        else:
-            new_asks = self.current_state.asks
-
-        self.current_state = OrderbookState(bids=new_bids, asks=new_asks, timestamp=data['t'], sequence=data['s'])
-        # print(self.current_state)
+        self.current_state.timestamp = data['t']
+        self.current_state.sequence = data['s']
 
     def get(self) -> OrderbookState:
         """
@@ -131,13 +124,13 @@ class OrderbookTraverser:
         """
         return self.current_state
 
-    def get_orderbook(self) -> OrderBook:
+    def get_orderbook(self) -> Orderbook:
         """
-        Converts current state to OrderBook object with float values
+        Converts current state to Orderbook object with float values
         """
-        return OrderBook(
+        return Orderbook(
             symbol=self.symbol,
-            asks=[(float(price), float(size)) for price, size in self.current_state.asks[::-1]],
+            asks=[(float(price), float(size)) for price, size in self.current_state.asks],
             bids=[(float(price), float(size)) for price, size in self.current_state.bids],
             timestamp=self.current_timestamp,
         )
@@ -163,13 +156,12 @@ class OrderbookTraverser:
         Adds the current book to the cache
         """
         self.obs_cache.add(self.current_state.timestamp, (deepcopy(self.current_state), self.current_position))
-        self.last_cached_ts = self.current_state.timestamp
 
     def _add_to_cache_if_needed(self) -> None:
         """
         Adds the current book to the cache if the last cached book was more than self.cache_frequency_seconds ago
         """
-        if self.current_state.timestamp - self.last_cached_ts > self.cache_frequency_seconds * 1000:
+        if self.current_state.timestamp - self.obs_cache.last_key > self.cache_frequency_seconds * 1000:
             self._add_to_cache()
 
     def _read_from_current(self, post_iteration_hook: Callable[[dict, dict], bool], hook_ctx: dict) -> None:
@@ -202,13 +194,15 @@ class OrderbookTraverser:
         Skips forward by specified number of seconds (or backward if seconds < 0).
         Moves relative to self.current_timestamp, then updates self.current_timestamp.
         """
-        target_time = int(self.current_timestamp + (seconds * 1000))  # Convert to milliseconds
+        # Do not allow timestamps earlier than our initial snapshot timestamp
+        target_time = max(self.initial_timestamp, int(self.current_timestamp + (seconds * 1000)))
 
         res = self.obs_cache.get(target_time)
         if res:
             self.current_state, self.current_position = res
             if self.current_state.timestamp == target_time:
                 # we're exactly where we want to be
+                self.current_timestamp = target_time
                 return
 
         self._read_from_current(post_iteration_hook=lambda hook_ctx, data: data['t'] > target_time, hook_ctx={})

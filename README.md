@@ -51,7 +51,8 @@ Start the backend:
 poetry run uvicorn src.backend.ob_replayer_backend:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-"Start" the frontend by opening src/frontend/index.html in your browser. It isn't necessary to build the frontend, so you don't need Node.JS, Webpack, etc. at all.
+Run the backend by opening http://localhost:8000 in your browser. It isn't necessary to build the frontend, so you don't need Node.js, Webpack, etc. at all.
+Still a package.json is provided in the frontend directory, so you can run `npm install` and `npm run build` if you insist.
 
 ## Deploy online
 

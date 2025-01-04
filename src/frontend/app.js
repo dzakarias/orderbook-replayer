@@ -28,7 +28,8 @@ const app = Vue.createApp({
             } else if (selectedMarket?.value == null) {
                 return "Select a market/date first";
             } else {
-                return `${selectedMarket.value} Orderbook at ${orderBook.value?.timestamp ? new Date(orderBook.value?.timestamp).toLocaleTimeString() : '-'}`;
+                date_ = orderBook.value?.timestamp ? new Date(orderBook.value?.timestamp) : null;
+                return `${selectedMarket.value} Orderbook at ${date_ ? date_.toLocaleTimeString('en-US',{timeZone: 'UTC'}) : '-'}`;
             }
         });
 
@@ -70,7 +71,7 @@ const app = Vue.createApp({
 
         const skipTo = () => {
             skipping.value = true;
-            const targetDateTime = new Date(`${selectedDate.value}T${selectedTime.value}`);
+            const targetDateTime = new Date(`${selectedDate.value}T${selectedTime.value}Z`);
             const targetTimestamp = targetDateTime.getTime();
             
             axios.post('/goto', {timestamp: targetTimestamp})
@@ -116,7 +117,7 @@ const app = Vue.createApp({
         };
 
         const getAskClass = (ask, index) => {
-            const prev = previousOrderBook.value.asks.slice().reverse()[index];
+            const prev = previousOrderBook.value.asks[index];
             if (!prev) return '';
             return ask[1] > prev[1] ? 'bg-green-100' :
                    ask[1] < prev[1] ? 'bg-red-100' : '';

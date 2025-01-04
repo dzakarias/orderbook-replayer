@@ -2,10 +2,10 @@ import json
 from decimal import Decimal
 
 import argparse
+from line_profiler import LineProfiler
 
 from halfbook import Halfbook
 
-from line_profiler import LineProfiler
 
 ENABLE_PROFILING = False
 

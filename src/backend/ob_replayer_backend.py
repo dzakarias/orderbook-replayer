@@ -1,6 +1,5 @@
 import datetime
 import os
-from typing import List, Tuple
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -8,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from .orderbook import OrderBook
+from .halfbook import Orderbook
 from .orderbook_traverser import OrderbookTraverser
 from .helpers.logger import log, set_logfile
 
@@ -27,14 +26,14 @@ class Market(BaseModel):
     date_: datetime.date
 
 
-class OrderBookResponse(BaseModel):
+class OrderbookResponse(BaseModel):
     symbol: str
-    asks: List[Tuple[float, float]]
-    bids: List[Tuple[float, float]]
+    asks: list[tuple[float, float]]
+    bids: list[tuple[float, float]]
     timestamp: int
 
 
-class OrderBookService:
+class OrderbookService:
     def __init__(self):
         self.current_history: OrderbookTraverser | None = None
         self.current_symbol: str | None = None
@@ -44,7 +43,7 @@ class OrderBookService:
         if not self.current_history:
             raise HTTPException(status_code=400, detail="No market selected")
 
-    def available_markets(self, date_: datetime.date) -> List[str]:
+    def available_markets(self, date_: datetime.date) -> list[str]:
         data_dir = './orderbooks'
         os.makedirs(data_dir, exist_ok=True)
         return [f.split('_')[1] for f in os.listdir(data_dir) if date_.strftime('%Y-%m-%d') in f and f.endswith('.data')]
@@ -58,25 +57,25 @@ class OrderBookService:
         self.current_symbol = symbol
         self.current_date = date_
 
-    def step(self) -> OrderBook:
+    def step(self) -> Orderbook:
         self._assert_history()
 
         self.current_history.step()
         return self.current_history.get_orderbook()
 
-    def skip(self, delta: float) -> OrderBook:
+    def skip(self, delta: float) -> Orderbook:
         self._assert_history()
 
         self.current_history.skip(delta)
         return self.current_history.get_orderbook()
 
-    def reset(self) -> OrderBook:
+    def reset(self) -> Orderbook:
         self._assert_history()
 
         self.current_history.reset()
         return self.current_history.get_orderbook()
 
-    def goto(self, dt: datetime.datetime) -> OrderBook:
+    def goto(self, dt: datetime.datetime) -> Orderbook:
         self._assert_history()
 
         timestamp = int(dt.timestamp() * 1000)
@@ -84,7 +83,7 @@ class OrderBookService:
         return self.current_history.get_orderbook()
 
 
-order_book_service = OrderBookService()
+order_book_service = OrderbookService()
 
 
 # Custom middleware to log requests
@@ -100,7 +99,7 @@ async def log_requests(request: Request, call_next):
     return response
 
 
-@app.get("/markets", response_model=List[str])
+@app.get("/markets", response_model=list[str])
 def get_available_markets(date_: datetime.date = datetime.date.today()):
     return order_book_service.available_markets(date_)
 
@@ -112,10 +111,10 @@ def select_market(market: Market):
     return {"message": f"Selected market {market.symbol} for {market.date_}"}
 
 
-@app.get("/step", response_model=OrderBookResponse)
+@app.get("/step", response_model=OrderbookResponse)
 def get_next_orderbook():
     orderbook = order_book_service.step()
-    return OrderBookResponse(**orderbook.__dict__)
+    return OrderbookResponse(**orderbook.__dict__)
 
 
 @app.post("/skip")
@@ -123,7 +122,7 @@ def skip_orderbook(req: dict):
     try:
         interval = float(req["seconds"])
         orderbook = order_book_service.skip(interval)
-        return OrderBookResponse(**orderbook.__dict__)
+        return OrderbookResponse(**orderbook.__dict__)
     except Exception as e:
         log(f"Error in /skip endpoint: {e}")
         raise HTTPException(status_code=422, detail=str(e))
@@ -132,7 +131,7 @@ def skip_orderbook(req: dict):
 @app.get("/reset")
 def reset():
     orderbook = order_book_service.reset()
-    return OrderBookResponse(**orderbook.__dict__)
+    return OrderbookResponse(**orderbook.__dict__)
 
 
 @app.post("/goto")
@@ -140,7 +139,7 @@ def goto_timestamp(req: dict):
     timestamp = float(req['timestamp'])
     dt = datetime.datetime.fromtimestamp(timestamp / 1000.0)
     orderbook = order_book_service.goto(dt)
-    return OrderBookResponse(**orderbook.__dict__)
+    return OrderbookResponse(**orderbook.__dict__)
 
 
 # Serve index.html as the default page
