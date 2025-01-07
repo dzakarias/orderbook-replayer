@@ -29,7 +29,7 @@ const app = Vue.createApp({
                 return "Select a market/date first";
             } else {
                 date_ = orderBook.value?.timestamp ? new Date(orderBook.value?.timestamp) : null;
-                return `${selectedMarket.value} Orderbook at ${date_ ? date_.toLocaleTimeString('en-US',{timeZone: 'UTC'}) : '-'}`;
+                return `${selectedMarket.value} Orderbook at ${date_ ? getFormattedTime(date_) : '-'}`;
             }
         });
 
@@ -143,6 +143,13 @@ const app = Vue.createApp({
             });
         };
 
+        const getFormattedTime = (date) => {
+            var d = date || new Date();
+            var z = n => ('0'+n).slice(-2);
+            var zz = n => ('00'+n).slice(-3);
+            return `${z(d.getUTCHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}.${zz(d.getMilliseconds())}`;
+        };
+
         onMounted(() => {
             fetchMarkets();
         });
@@ -171,7 +178,8 @@ const app = Vue.createApp({
             getBidClass,
             getAskClass,
             formatTuples,
-            orderbookLabel
+            orderbookLabel,
+            getFormattedTime
         };
     }
 });

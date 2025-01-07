@@ -33,15 +33,10 @@ class FPCache:
     def __init__(self):
         self.cache = SortedDict()
 
-    @property
-    def last_key(self) -> int | None:
-        if self.cache:
-            return self.cache.keys()[-1]
-        return None
-
     def add(self, key: int, value) -> None:
         """
-        Adds a new key-value pair if key is not already present
+        Adds a new key-value pair if key is not already present. A (deep) copy of value is added.
+        If key is already present, does nothing.
         """
         if key in self.cache:
             return
@@ -50,16 +45,40 @@ class FPCache:
     def get(self, key: int):
         """
         Returns the value associated with the given key, if key is present.
-        Otherwise the value associated with the largest key smaller than input key, or None if we do not have any values.
+        Otherwise the value associated with the largest key smaller than input key, or None if we do not have any keys smaller than input key.
+        Note: the cached value is returned as-is (i.e. no copying!)
         """
         if not self.cache:
             return None
         idx = self.cache.bisect_left(key)
 
         if idx < len(self.cache) and self.cache.peekitem(index=idx)[0] == key:
+            # key is present in cache
+            # print('Cache hit for', key)
             return self.cache.peekitem(index=idx)[1]
-        if len(self.cache):
+        if idx:
+            # print('Cache miss for', key, '\nItem at idx-1: ', self.cache.peekitem(index=idx - 1))
             return self.cache.peekitem(index=idx - 1)[1]
+        return None
+
+    def get_closest_key(self, key: int) -> int | None:
+        """
+        Returns the existing key closest to input key or None if no keys exist.
+        """
+        if not self.cache:
+            return None
+        idx = self.cache.bisect_left(key)
+
+        if idx < len(self.cache) and self.cache.peekitem(index=idx)[0] == key:
+            return key
+        if idx:
+            key_before = self.cache.peekitem(index=idx - 1)[0]
+            if idx == len(self.cache):
+                return key_before
+            key_after = self.cache.peekitem(index=idx)[0]
+            if key - key_before < key_after - key:
+                return key_before
+            return key_after
         return None
 
 
@@ -83,6 +102,20 @@ class OrderbookTraverser:
         self._load_initial_snapshot()
         self.initial_timestamp = self.current_timestamp
 
+    def _add_to_cache(self) -> None:
+        """
+        Adds the current book to the cache
+        """
+        self.obs_cache.add(self.current_state.timestamp, (self.current_state, self.current_position))
+
+    def _add_to_cache_if_needed(self) -> None:
+        """
+        Adds the current book to the cache if the last cached book was more than self.cache_frequency_seconds ago
+        """
+        distance_to_closest_cached_state = abs(self.current_state.timestamp - self.obs_cache.get_closest_key(self.current_state.timestamp))
+        if distance_to_closest_cached_state > self.cache_frequency_seconds * 1000:
+            self._add_to_cache()
+
     def _load_initial_snapshot(self):
         """
         Load the initial snapshot and store its position
@@ -101,6 +134,31 @@ class OrderbookTraverser:
 
             self.current_position = f.tell()
             self._add_to_cache()
+
+    def _read_from_current(self, post_iteration_hook: Callable[[dict, dict], bool], hook_ctx: dict) -> None:
+        """
+        Reads deltas from the current position. Terminates when post_iteration_hook returns True
+        Updates state, saves current position, updates cache on every complete (not terminated) iteration.
+        post_iteration_hook's parameters:
+          - hook_ctx (a dict, initialized to empty dict),
+          - current delta loaded from disk
+        """
+        with open(self.filename, 'r') as f:
+            f.seek(self.current_position)
+            while True:
+                line = f.readline()
+                if not line:  # EOF
+                    break
+                data = json.loads(line)
+                terminate = post_iteration_hook(hook_ctx, data)
+                if terminate:
+                    break
+
+                self._process_update(data)
+                self.current_position = f.tell()
+
+                # Update cache
+                self._add_to_cache_if_needed()
 
     def _process_update(self, data: dict):
         """
@@ -151,44 +209,6 @@ class OrderbookTraverser:
             return Decimal(self.current_state.asks[0][0])
         return None
 
-    def _add_to_cache(self) -> None:
-        """
-        Adds the current book to the cache
-        """
-        self.obs_cache.add(self.current_state.timestamp, (deepcopy(self.current_state), self.current_position))
-
-    def _add_to_cache_if_needed(self) -> None:
-        """
-        Adds the current book to the cache if the last cached book was more than self.cache_frequency_seconds ago
-        """
-        if self.current_state.timestamp - self.obs_cache.last_key > self.cache_frequency_seconds * 1000:
-            self._add_to_cache()
-
-    def _read_from_current(self, post_iteration_hook: Callable[[dict, dict], bool], hook_ctx: dict) -> None:
-        """
-        Reads deltas from the current position. Terminates when post_iteration_hook returns True
-        Updates state, saves current position, updates cache on every complete (not terminated) iteration.
-        post_iteration_hook's parameters:
-          - hook_ctx (a dict, initialized to empty dict),
-          - current delta loaded from disk
-        """
-        with open(self.filename, 'r') as f:
-            f.seek(self.current_position)
-            while True:
-                line = f.readline()
-                if not line:  # EOF
-                    break
-                data = json.loads(line)
-                terminate = post_iteration_hook(hook_ctx, data)
-                if terminate:
-                    break
-
-                self._process_update(data)
-                self.current_position = f.tell()
-
-                # Update cache
-                self._add_to_cache_if_needed()
-
     def skip(self, seconds: float) -> None:
         """
         Skips forward by specified number of seconds (or backward if seconds < 0).
@@ -199,11 +219,13 @@ class OrderbookTraverser:
 
         res = self.obs_cache.get(target_time)
         if res:
-            self.current_state, self.current_position = res
+            self.current_state, self.current_position = deepcopy(res)
             if self.current_state.timestamp == target_time:
                 # we're exactly where we want to be
                 self.current_timestamp = target_time
                 return
+        else:
+            self.reset()
 
         self._read_from_current(post_iteration_hook=lambda hook_ctx, data: data['t'] > target_time, hook_ctx={})
         self.current_timestamp = target_time
@@ -226,11 +248,7 @@ class OrderbookTraverser:
 
             return _data['t'] > _hook_ctx['target_time']
 
-        hook_ctx = {
-            'lowest_ask': self.get_best_ask(),
-            'highest_bid': self.get_best_bid(),
-            'target_time': self.current_state.timestamp + (seconds * 1000),
-        }
+        hook_ctx = {'lowest_ask': self.get_best_ask(), 'highest_bid': self.get_best_bid(), 'target_time': start_time + (seconds * 1000)}
         self._read_from_current(post_iteration_hook=record_extremes_until_target, hook_ctx=hook_ctx)
         self.current_timestamp = int(hook_ctx['target_time'])
 
