@@ -52,11 +52,14 @@
         <div class="flex justify-between items-center mb-8">
             <h1 class="text-3xl font-bold text-gray-800">Order Book History Viewer</h1>
             <div class="flex space-x-4">
-                <input type="date" v-model="selectedDate" @change="fetchMarkets"
+                <input type="date" v-model="state.selectedDate" @change="fetchMarkets"
                        class="form-control border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
-                <select v-model="selectedMarket" @change="selectMarket"
+                <select v-model="state.selectedMarket" @change="selectMarket"
                         class="form-select border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-[200px]">
-                    <option v-for="market in markets" :value="market">{{ market }}</option>
+                    <option value="" disabled>Select a market</option>
+                    <option v-for="market in state.markets" :key="market" :value="market">
+                        {{ market }}
+                    </option>
                 </select>
             </div>
         </div>
@@ -69,17 +72,17 @@
                         <button @click="skipTo" class="control-btn bg-blue-500 text-white p-3 rounded-lg">
                             Go to time...
                         </button>
-                        <input type="time" v-model="selectedTime" step="1"
+                        <input type="time" v-model="state.selectedTime" step="1"
                                class="flex-1 border border-gray-300 rounded-lg p-2 focus:ring-2 focus:ring-blue-500 focus:border-blue-500">
                     </div>
                     <button @click="stepForward" class="control-btn bg-blue-500 text-white p-3 rounded-lg col-span-2">
                         ⏩ Step Forward
                     </button>
                     <button @click="skipBackward" class="control-btn bg-blue-500 text-white p-3 rounded-lg">
-                        ⏪ Rewind {{ replayStepSize }} Seconds
+                        ⏪ Rewind {{ state.replayStepSize }} Seconds
                     </button>
                     <button @click="skipForward" class="control-btn bg-blue-600 text-white p-3 rounded-lg">
-                        ⏭️ Forward {{ replayStepSize }} Seconds
+                        ⏭️ Forward {{ state.replayStepSize }} Seconds
                     </button>
                     <button @click="reset" class="control-btn bg-purple-500 text-white p-3 rounded-lg col-span-2">
                         🔄 Reset
@@ -95,8 +98,8 @@
                     <div class="flex flex-col space-y-0">
                         <label for="range1" class="block mb-2 text-sm">Replay stepsize</label>
                         <div class="flex space-x-4">
-                            <input type="range" id="range1" class="block mb-2" v-model="replayStepSize" min="0.1" max="60" step="0.1"/>
-                            <span class="block mb-2">{{ replayStepSize }} seconds</span>
+                            <input type="range" id="range1" class="block mb-2" v-model="state.replayStepSize" min="0.1" max="60" step="0.1"/>
+                            <span class="block mb-2">{{ state.replayStepSize }} seconds</span>
                         </div>
                     </div>
                 </div>
@@ -105,8 +108,8 @@
                     <div class="flex flex-col space-y-0">
                         <label for="range2" class="block mb-2 text-sm">Replay speed</label>
                         <div class="flex space-x-4">
-                            <input type="range" id="range2" class="block mb-2" v-model="replaySpeed" min="0.1" max="10" step="0.1"/>
-                            <span class="block mb-2">{{ replaySpeed }} seconds</span>
+                            <input type="range" id="range2" class="block mb-2" v-model="state.replaySpeed" min="0.1" max="10" step="0.1"/>
+                            <span class="block mb-2">{{ state.replaySpeed }} seconds</span>
                         </div>
                     </div>
                 </div>
@@ -127,7 +130,7 @@
                             </tr>
                             </thead>
                             <tbody>
-                            <tr v-for="(ask, index) in orderBook.asks"
+                            <tr v-for="(ask, index) in state.orderBook.asks"
                                 :key="`ask-${index}`"
                                 :class="getAskClass(ask, index)">
                                 <td class="p-2 font-bold">{{ ask[0] }}</td>
@@ -147,7 +150,7 @@
                             </tr>
                             </thead>
                             <tbody>
-                            <tr v-for="(bid, index) in orderBook.bids"
+                            <tr v-for="(bid, index) in state.orderBook.bids"
                                 :key="`bid-${index}`"
                                 :class="getBidClass(bid, index)">
                                 <td class="p-2 font-bold">{{ bid[0] }}</td>

@@ -1,18 +1,56 @@
-const { createApp, ref, computed, onMounted } = Vue;
+const { createApp, ref, computed, onMounted, reactive } = Vue;
+
+// API Service abstraction
+const createApiService = () => {
+    const baseUrl = '';
+    
+    const get = async (endpoint, params = {}) => {
+        try {
+            const response = await axios.get(`${baseUrl}${endpoint}`, {params});
+            return response.data;
+        } catch (error) {
+            console.error(endpoint, 'API Error:', error);
+            throw error;
+        }
+    };
+
+    const post = async (endpoint, data = {}) => {
+        try {
+            const response = await axios.post(`${baseUrl}${endpoint}`, data);
+            return response.data;
+        } catch (error) {
+            console.error(endpoint, 'API Error:', error);
+            throw error;
+        }
+    };
+
+    return {
+        getMarkets: (date) => get('/markets', { date_: date }),
+        selectMarket: (symbol, date) => post('/select_market', { symbol: symbol, date_: date }),
+        stepForward: () => get('/step'),
+        skip: (seconds) => post('/skip', { seconds }),
+        goto: (timestamp) => post('/goto', { timestamp }),
+        reset: () => get('/reset')
+    };
+};
 
 const app = Vue.createApp({
     setup() {
-        const selectedDate = ref(new Date().toISOString().split('T')[0]);
-        const selectedTime = ref(new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'}));
-        const selectedMarket = ref(null);
-        const markets = ref([]);
-        const orderBook = ref({ bids: [], asks: [] });
-        const replaySpeed = ref(2);
-        const replayStepSize = ref(2);
-        const replayInterval = ref(null);
-        const previousOrderBook = ref({ bids: [], asks: [] });
-        // track the status of the skipTo operation
-        const skipping = ref(false);
+        const api = createApiService();
+        
+        // Reactive state
+        const state = reactive({
+            selectedDate: new Date().toISOString().split('T')[0],
+            selectedTime: new Date().toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit', hour12: false}),
+            selectedMarket: '',
+            markets: [],
+            orderBook: { bids: [], asks: [] },
+            replaySpeed: 2,
+            replayStepSize: 2,
+            replayInterval: null,
+            previousOrderBook: { bids: [], asks: [] },
+            skipping: false
+        });
 
         const dates = computed(() => {
             return Array.from({ length: 7 }, (_, i) => {
@@ -23,131 +61,157 @@ const app = Vue.createApp({
         });
 
         const orderbookLabel = computed(() => {
-            if (skipping.value) {
-                return `Moving to ${selectedTime.value} ...`;
-            } else if (selectedMarket?.value == null) {
+            if (state.skipping) {
+                return `Moving to ${state.selectedTime} ...`;
+            } else if (state.selectedMarket == null) {
                 return "Select a market/date first";
             } else {
-                date_ = orderBook.value?.timestamp ? new Date(orderBook.value?.timestamp) : null;
-                return `${selectedMarket.value} Orderbook at ${date_ ? getFormattedTime(date_) : '-'}`;
+                date_ = state.orderBook?.timestamp ? new Date(state.orderBook?.timestamp) : null;
+                return `${state.selectedMarket} Orderbook at ${date_ ? getFormattedTime(date_) : '-'}`;
             }
         });
 
-        const fetchMarkets = () => {
-            axios.get(`/markets?date_=${selectedDate.value}`)
-                .then(response => {
-                    markets.value = response.data;
-                    selectedMarket.value = markets.value[0];
-                    selectMarket();
-                });
+        // Order Book Utilities
+        const formatDecimal = (value, maxDecimals) => Number(value).toFixed(maxDecimals);
+        
+        const calculateMaxDecimals = (tuples, index) => {
+            return Math.max(...tuples.map(tuple => {
+                const str = tuple[index].toString();
+                const decimalIndex = str.indexOf('.');
+                return decimalIndex === -1 ? 0 : str.length - decimalIndex - 1;
+            }));
         };
 
-        const selectMarket = () => {
-            axios.post('/select_market', { symbol: selectedMarket.value, date_: selectedDate.value })
-                .then(stepForward)
-                .catch(error => {
-                    console.log(`No such market: ${selectedMarket.value} ${selectedDate.value}`);
-                });
+        const formatTuples = (tuples) => {
+            if (!tuples.length) return tuples;
+            
+            const maxPriceDecimals = calculateMaxDecimals(tuples, 0);
+            const maxQtyDecimals = calculateMaxDecimals(tuples, 1);
+            
+            return tuples.map(tuple => [
+                formatDecimal(tuple[0], maxPriceDecimals),
+                formatDecimal(tuple[1], maxQtyDecimals)
+            ]);
         };
 
         const updateOrderBook = (responseData, updatePrevious = true) => {
             if (updatePrevious) {
-                previousOrderBook.value = { ...orderBook.value };
+                state.previousOrderBook = { ...state.orderBook };
             }
-            orderBook.value = responseData;
-            orderBook.value.bids = formatTuples(orderBook.value.bids);
-            orderBook.value.asks = formatTuples(orderBook.value.asks);
+            state.orderBook = {
+                ...responseData,
+                bids: formatTuples(responseData.bids),
+                asks: formatTuples(responseData.asks)
+            };
         };
 
-        const stepForward = () => {
-            axios.get('/step')
-                .then(response => updateOrderBook(response.data));
-        };
-
-        const skipForward = () => {
-            axios.post('/skip', {seconds: replayStepSize.value})
-                .then(response => updateOrderBook(response.data));
-        };
-
-        const skipTo = () => {
-            skipping.value = true;
-            const targetDateTime = new Date(`${selectedDate.value}T${selectedTime.value}Z`);
-            const targetTimestamp = targetDateTime.getTime();
-            
-            axios.post('/goto', {timestamp: targetTimestamp})
-                .then(response => {
-                    updateOrderBook(response.data);
-                    skipping.value = false;
-                })
-                .catch(error => {
-                    skipping.value = false;
-                    console.error(error);
-                })
-                .finally(() => {
-                    skipping.value = false;
-                });
-                if (replayInterval.value) {
-                    stopReplay();
+        // Market Operations
+        const fetchMarkets = async () => {
+            try {
+                // Ensure we have a valid date string
+                const date = state.selectedDate;
+                const markets = await api.getMarkets(date);
+                // Ensure we have an array of market symbols
+                state.markets = Array.isArray(markets) ? markets : [];
+                
+                if (state.markets.length > 0) {
+                    // Select first market by default
+                    state.selectedMarket = state.markets[0];
+                    await selectMarket();
+                } else {
+                    state.selectedMarket = '';
+                    state.orderBook = { bids: [], asks: [] };
                 }
+            } catch (error) {
+                console.error('Failed to fetch markets:', error);
+                state.markets = [];
+                state.selectedMarket = '';
+                state.orderBook = { bids: [], asks: [] };
+            }
         };
 
-        const skipBackward = () => {
-           axios.post('/skip', {seconds: -replayStepSize.value})
-                .then(response => updateOrderBook(response.data));
+        const selectMarket = async () => {
+            try {
+                await api.selectMarket(state.selectedMarket, state.selectedDate);
+                await stepForward();
+            } catch (error) {
+                console.error(`No such market: ${state.selectedMarket} ${state.selectedDate}`);
+            }
         };
 
-        const reset = () => {
-            axios.get('/reset')
-                .then(response => updateOrderBook(response.data, false));
+        // Order Book Operations
+        const stepForward = async () => {
+            stopReplay();
+            const data = await api.stepForward();
+            updateOrderBook(data);
         };
 
+        const skip = async (seconds) => {
+            const data = await api.skip(seconds);
+            updateOrderBook(data);
+        };
+
+        const skipForward = async() => {
+            stopReplay();
+            skip(state.replayStepSize);
+
+        };
+
+        const skipBackward = async() => {
+            stopReplay();
+            skip(-state.replayStepSize);
+        };
+
+        const skipTo = async () => {
+            state.skipping = true;
+            try {
+                stopReplay();
+                
+                const targetDateTime = new Date(`${state.selectedDate}T${state.selectedTime}Z`);
+                const data = await api.goto(targetDateTime.getTime());
+                updateOrderBook(data);
+            } catch (error) {
+                console.error('Skip to failed:', error);
+            } finally {
+                state.skipping = false;
+            }
+        };
+
+        const reset = async () => {
+            stopReplay();
+            const data = await api.reset();
+            updateOrderBook(data, false);
+        };
+
+        // Replay Controls
         const startReplay = () => {
-            replayInterval.value = setInterval(skipForward, replaySpeed.value * 1000);
+            state.replayInterval = setInterval(() => skip(state.replayStepSize), state.replaySpeed * 1000);
         };
 
         const stopReplay = () => {
-            clearInterval(replayInterval.value);
+            if (state.replayInterval) {
+                clearInterval(state.replayInterval);
+                state.replayInterval = null;
+            }
         };
 
-        const getBidClass = (bid, index) => {
-            const prev = previousOrderBook.value.bids[index];
-            if (!prev) return '';
-            return bid[1] > prev[1] ? 'bg-green-100' :
-                   bid[1] < prev[1] ? 'bg-red-100' : '';
+        // UI Helpers
+        const getPriceLevelClass = (current, previous, index) => {
+            if (!previous?.[index]) return '';
+            return current[1] > previous[index][1] ? 'bg-green-100' :
+                   current[1] < previous[index][1] ? 'bg-red-100' : '';
         };
 
-        const getAskClass = (ask, index) => {
-            const prev = previousOrderBook.value.asks[index];
-            if (!prev) return '';
-            return ask[1] > prev[1] ? 'bg-green-100' :
-                   ask[1] < prev[1] ? 'bg-red-100' : '';
-        };
+        const getBidClass = (bid, index) => 
+            getPriceLevelClass(bid, state.previousOrderBook.bids, index);
 
-        const formatTuples = (tuples) => {
-            const maxDecimalsFirst = Math.max(...tuples.map(tuple => {
-                const str = tuple[0].toString();
-                const decimalIndex = str.indexOf('.');
-                return decimalIndex === -1 ? 0 : str.length - decimalIndex - 1;
-            }));
-
-            const maxDecimalsSecond = Math.max(...tuples.map(tuple => {
-                const str = tuple[1].toString();
-                const decimalIndex = str.indexOf('.');
-                return decimalIndex === -1 ? 0 : str.length - decimalIndex - 1;
-            }));
-
-            return tuples.map(tuple => {
-                const firstValue = Number(tuple[0]).toFixed(maxDecimalsFirst);
-                const secondValue = Number(tuple[1]).toFixed(maxDecimalsSecond);
-                return [firstValue, secondValue];
-            });
-        };
+        const getAskClass = (ask, index) => 
+            getPriceLevelClass(ask, state.previousOrderBook.asks, index);
 
         const getFormattedTime = (date) => {
-            var d = date || new Date();
-            var z = n => ('0'+n).slice(-2);
-            var zz = n => ('00'+n).slice(-3);
-            return `${z(d.getUTCHours())}:${z(d.getMinutes())}:${z(d.getSeconds())}.${zz(d.getMilliseconds())}`;
+            const d = date || new Date();
+            const pad = (n, length) => n.toString().padStart(length, '0');
+            return `${pad(d.getUTCHours(), 2)}:${pad(d.getMinutes(), 2)}:${pad(d.getSeconds(), 2)}.${pad(d.getMilliseconds(), 3)}`;
         };
 
         onMounted(() => {
@@ -155,17 +219,7 @@ const app = Vue.createApp({
         });
 
         return {
-            selectedDate,
-            selectedTime,
-            selectedMarket,
-            markets,
-            orderBook,
-            replaySpeed,
-            replayStepSize,
-            replayInterval,
-            previousOrderBook,
-            skipping,
-            dates,
+            state,
             fetchMarkets,
             selectMarket,
             stepForward,
